@@ -190,9 +190,7 @@ def main():
                     business = Business()
 
                     if listing.locator(name_xpath).count() > 0:
-                        business.name = listing.locator(name_xpath).all(
-                            
-                        )[0].inner_text()
+                        business.name = listing.locator(name_xpath).all()[0].inner_text()
                     else:
                         business.name = ""
                     if page.locator(address_xpath).count() > 0:
