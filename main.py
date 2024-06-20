@@ -1,243 +1,256 @@
-"""This script serves as an example on how to use Python 
-   & Playwright to scrape/extract data from Google Maps"""
-
-from playwright.sync_api import sync_playwright
-from dataclasses import dataclass, asdict, field
+from playwright.sync_api import sync_playwright, Playwright
+from dataclasses import dataclass
 import pandas as pd
+from playwright.async_api import Locator
+import re
+import time
 import argparse
 import os
-import sys
 
 @dataclass
 class Business:
     """holds business data"""
-
-    name: str = None
-    address: str = None
-    website: str = None
-    phone_number: str = None
-    reviews_count: int = None
-    reviews_average: float = None
-    latitude: float = None
-    longitude: float = None
-
+    name: str = '-'
+    address: str = '-'
+    website: str = '-'
+    phone_number: str = '-'
+    reviews_count: int = '-'
+    ratings: float = '-'
+    industry:str = '-'
+    google_link:str='-'
+    latitude: float = '-'
+    longitude: float = '-'
+    
+    
+    def __repr__(self) -> str:
+        return f"\nCompany:{self.name}\nStars:{self.ratings}\nWebsite:{self.website}\nIndustry:{self.industry}\nPhone:{self.phone_number}\nGoogle Link:{self.google_link}"
 
 @dataclass
-class BusinessList:
-    """holds list of Business objects,
-    and save to both excel and csv
-    """
-    business_list: list[Business] = field(default_factory=list)
-    save_at = 'output'
-
-    def dataframe(self):
-        """transform business_list to pandas dataframe
-
-        Returns: pandas dataframe
-        """
-        return pd.json_normalize(
-            (asdict(business) for business in self.business_list), sep="_"
-        )
-
-    def save_to_excel(self, filename):
-        """saves pandas dataframe to excel (xlsx) file
-
-        Args:
-            filename (str): filename
-        """
-
-        if not os.path.exists(self.save_at):
-            os.makedirs(self.save_at)
-        self.dataframe().to_excel(f"output/{filename}.xlsx", index=False)
-
-    def save_to_csv(self, filename):
-        """saves pandas dataframe to csv file
-
-        Args:
-            filename (str): filename
-        """
-
-        if not os.path.exists(self.save_at):
-            os.makedirs(self.save_at)
-        self.dataframe().to_csv(f"output/{filename}.csv", index=False)
-
-def extract_coordinates_from_url(url: str) -> tuple[float,float]:
-    """helper function to extract coordinates from url"""
+class ElementAttributes:
+    COMPANY_TILE = 'hfpxzc'
+    FOCUS_REGION='hfpxzc'
+    LIST_END='HlvSq' # The element we encounter when no-more data can be loaded.
+    COMPANY_NAME = '.DUwDvf.lfPIob'
+    COMPANY_WEBSITE = '.rogA2c.ITvuef'
+    COMPANY_RATINGS = '.ceNzKf'
+    COMPANY_INDUSTRY = '.DkEaL'
+    COMPANY_DETAILS = '.Io6YTe.fontBodyMedium.kR99db'
     
-    coordinates = url.split('/@')[-1].split('/')[0]
-    # return latitude, longitude
-    return float(coordinates.split(',')[0]), float(coordinates.split(',')[1])
 
-def main():
+def scrape_google_links(query:str):
+    businesses:list[Business] = []
     
-    ########
-    # input 
-    ########
-    
-    # read search from arguments
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-s", "--search", type=str)
-    parser.add_argument("-t", "--total", type=int)
-    args = parser.parse_args()
-    
-    if args.search:
-        search_list = [args.search]
-        
-    if args.total:
-        total = args.total
-    else:
-        # if no total is passed, we set the value to random big number
-        total = 1_000_000
-
-    if not args.search:
-        search_list = []
-        # read search from input.txt file
-        input_file_name = 'input.txt'
-        # Get the absolute path of the file in the current working directory
-        input_file_path = os.path.join(os.getcwd(), input_file_name)
-        # Check if the file exists
-        if os.path.exists(input_file_path):
-        # Open the file in read mode
-            with open(input_file_path, 'r') as file:
-            # Read all lines into a list
-                search_list = file.readlines()
-                
-        if len(search_list) == 0:
-            print('Error occured: You must either pass the -s search argument, or add searches to input.txt')
-            sys.exit()
-        
-    ###########
-    # scraping
-    ###########
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        page = browser.new_page()
-
-        page.goto("https://www.google.com/maps", timeout=60000)
-        # wait is added for dev phase. can remove it in production
-        page.wait_for_timeout(5000)
-        
-        for search_for_index, search_for in enumerate(search_list):
-            print(f"-----\n{search_for_index} - {search_for}".strip())
-
-            page.locator('//input[@id="searchboxinput"]').fill(search_for)
-            page.wait_for_timeout(3000)
-
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(5000)
-
-            # scrolling
-            page.hover('//a[contains(@href, "https://www.google.com/maps/place")]')
-
-            # this variable is used to detect if the bot
-            # scraped the same number of listings in the previous iteration
-            previously_counted = 0
-            while True:
-                page.mouse.wheel(0, 10000)
-                page.wait_for_timeout(3000)
-
-                if (
-                    page.locator(
-                        '//a[contains(@href, "https://www.google.com/maps/place")]'
-                    ).count()
-                    >= total
-                ):
-                    listings = page.locator(
-                        '//a[contains(@href, "https://www.google.com/maps/place")]'
-                    ).all()[:total]
-                    listings = [listing.locator("xpath=..") for listing in listings]
-                    print(f"Total Scraped: {len(listings)}")
-                    break
-                else:
-                    # logic to break from loop to not run infinitely
-                    # in case arrived at all available listings
-                    if (
-                        page.locator(
-                            '//a[contains(@href, "https://www.google.com/maps/place")]'
-                        ).count()
-                        == previously_counted
-                    ):
-                        listings = page.locator(
-                            '//a[contains(@href, "https://www.google.com/maps/place")]'
-                        ).all()
-                        print(f"Arrived at all available\nTotal Scraped: {len(listings)}")
-                        break
-                    else:
-                        previously_counted = page.locator(
-                            '//a[contains(@href, "https://www.google.com/maps/place")]'
-                        ).count()
-                        print(
-                            f"Currently Scraped: ",
-                            page.locator(
-                                '//a[contains(@href, "https://www.google.com/maps/place")]'
-                            ).count(),
-                        )
-
-            business_list = BusinessList()
-
-            # scraping
-            for listing in listings:
-                try:
-                    listing.click()
-                    page.wait_for_timeout(5000)
-
-                    name_xpath = '//div[contains(@class, "fontHeadlineSmall")]'
-                    address_xpath = '//button[@data-item-id="address"]//div[contains(@class, "fontBodyMedium")]'
-                    website_xpath = '//a[@data-item-id="authority"]//div[contains(@class, "fontBodyMedium")]'
-                    phone_number_xpath = '//button[contains(@data-item-id, "phone:tel:")]//div[contains(@class, "fontBodyMedium")]'
-                    reviews_span_xpath = '//span[@role="img"]'
-
-                    business = Business()
-
-                    if listing.locator(name_xpath).count() > 0:
-                        business.name = listing.locator(name_xpath).all()[0].inner_text()
-                    else:
-                        business.name = ""
-                    if page.locator(address_xpath).count() > 0:
-                        business.address = page.locator(address_xpath).all()[0].inner_text()
-                    else:
-                        business.address = ""
-                    if page.locator(website_xpath).count() > 0:
-                        business.website = page.locator(website_xpath).all()[0].inner_text()
-                    else:
-                        business.website = ""
-                    if page.locator(phone_number_xpath).count() > 0:
-                        business.phone_number = page.locator(phone_number_xpath).all()[0].inner_text()
-                    else:
-                        business.phone_number = ""
-                    if listing.locator(reviews_span_xpath).count() > 0:
-                        business.reviews_average = float(
-                            listing.locator(reviews_span_xpath).all()[0]
-                            .get_attribute("aria-label")
-                            .split()[0]
-                            .replace(",", ".")
-                            .strip()
-                        )
-                        business.reviews_count = int(
-                            listing.locator(reviews_span_xpath).all()[0]
-                            .get_attribute("aria-label")
-                            .split()[2]
-                            .replace(',','')
-                            .strip()
-                        )
-                    else:
-                        business.reviews_average = ""
-                        business.reviews_count = ""
-                    
-                    business.latitude, business.longitude = extract_coordinates_from_url(page.url)
-
-                    business_list.business_list.append(business)
-                except Exception as e:
-                    print(f'Error occured: {e}')
+        try:
+            # DECLARATION
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
             
-            #########
-            # output
-            #########
-            business_list.save_to_excel(f"google_maps_data_{search_for}".replace(' ', '_'))
-            business_list.save_to_csv(f"google_maps_data_{search_for}".replace(' ', '_'))
+            
+            # INITIATE - SEARCH AND LOCATE SCRAPING REGION
+            page.goto(query)
+            page.locator(f'.{ElementAttributes.FOCUS_REGION}').first.focus()
+            
+            
 
-        browser.close()
+            # SCROLL THE LIST TO LOAD EACH ELEMENT
+            for _ in range(100):
+                page.keyboard.press("End")
+                print(f"\n{'-'*10}Scrolling{'-'*10}\n")
+                if(page.locator(f'.{ElementAttributes.LIST_END}').is_visible()):
+                    break
+                time.sleep(1)
+            
+            # FETCHING ALL THE COMPANY TILE/BUSINESS PROFILE ELEMENTS.
+            _companies = page.locator(f'.{ElementAttributes.COMPANY_TILE}').all()
+            companies:list[Locator] = _companies
+            total = (len(_companies))
+            i=1
+            
+            
+            # EXTRACT GOOGLE PAGE LINK FROM EACH OF THE RESULTS.
+            for company in companies:
+                
+                biz = Business()
+                biz.google_link = company.get_attribute('href')
+                businesses.append(biz)
+
+                print(f"\n{'-'*10}\n{i}/{total}\n{biz}\n{'-'*10}\n")
+               
+                i+=1
+
+                
+            print("out of loop now")
+            browser.close()
+                
+            # SAVE THE RESULT IN A CSV
+            df = make_dataframe_for_links(businesses)
+
+            return df
+        
+        except Exception as e:
+            print(f"{'-'*10}x{'-'*10}")
+            print(f"Some shit timed out.")
+            print(e)
+            print(f"{'-'*10}x{'-'*10}")
+
+
+def scrape_google_page(page_link) -> dict:
+    with sync_playwright() as p:
+       try:
+            # DECLARATION
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            
+            # INITIATE - SEARCH AND LOCATE SCRAPING REGION
+            page.goto(page_link)
+            biz = Business()
+            
+            # SCRAPING DIFFERENT DATA POINTS
+            name = page.locator(ElementAttributes.COMPANY_NAME).text_content()
+            biz.name = name
+            
+            
+            website = page.locator(ElementAttributes.COMPANY_WEBSITE).text_content(timeout=2500)
+            biz.website = website
+            
+            
+            ratings = page.locator(ElementAttributes.COMPANY_RATINGS).get_attribute('aria-label')
+            biz.ratings = ratings
+            
+            
+            industry = page.locator(ElementAttributes.COMPANY_INDUSTRY).first.text_content()
+            biz.industry = industry
+            
+            #SCRAPES ALL THE COMPANY DETAILS AND FILTERS THE PHONE NUMBER USING REGEX
+            detail_elements = page.locator(ElementAttributes.COMPANY_DETAILS).all()
+            pattern = re.compile(r"(\+\d{1,3})?\s?\(?\d{1,4}\)?[\s.-]?\d{3}[\s.-]?\d{4}")
+            for detail in detail_elements:
+                phone_number = detail.all_text_contents()
+                if(len(phone_number[0])>20):
+                    continue
+                else:
+                    match = re.search(pattern, phone_number[0])
+                    if(match):
+                        biz.phone_number =  phone_number[0]
+                        break
+            
+            biz.google_link = page_link
+            
+            print(f"\n{'-'*10}\n{biz}\n{'-'*10}\n")
+            
+            df = make_dataframe_for_pages(biz)
+            
+            return df
+       except Exception as e:
+            print(f"{'-'*10}x{'-'*10}")
+            print(f"Some shit timed out.")
+            print(e)
+            print(f"{'-'*10}x{'-'*10}")
+            
+# MAKING A DATAFRAME FOR INFORMATION FROM BUSINESS PAGES
+def make_dataframe_for_links(bizlist:list[Business]):
+    data = {
+            "google_link":[],
+            }
+    for biz in bizlist:
+        data['google_link'].append(biz.google_link)
+
+    return data
+
+
+# MAKING A DATAFRAME FOR INFORMATION TAKEN FROM BUSINESS PAGES
+def make_dataframe_for_pages(biz:Business) -> dict:
+    data = {"company_name":[],
+            "company_website":[],
+            "ratings":[],
+            "industry":[],
+            "phone":[],
+            "google_link":[]}
+
+    data['company_name'].append(biz.name) 
+    data['company_website'].append(biz.website) 
+    data['ratings'].append(biz.ratings) 
+    data['industry'].append(biz.industry)
+    data['phone'].append(biz.phone_number)
+    data['google_link'].append(biz.google_link)
+
+    return data
+
+# CREATE GOOGLE MAP URLS FROM THE LIST OF STATES IN USA
+def create_urls(keyword:str,):
+    slug = keyword.replace(" ", "+")
+    locations = []
+    queries = []
+    locations = open('maps.txt','r').read().splitlines()
+    for loc in locations:
+        query = f"https://www.google.com/maps/search/{slug}+near+{loc.replace(' ', '+')}"
+        queries.append(query)
+    return queries
+        
+
+# SCRAPE URLS OF BUSINESS PAGES AND STORE IT IN 'data/links/{filename}.csv'
+def scrape_business_urls(keyword:str):
+    urls = create_urls(keyword)
+    
+    for url in urls:
+        result_df = scrape_google_links(url)
+        
+        if(result_df):
+            df=pd.DataFrame(result_df)
+            file_name = f'data/links/{keyword}.csv'
+            if(os.path.isfile(file_name)):
+                df.to_csv(file_name, index=False, header=False, mode='a')
+            else:
+                df.to_csv(file_name, index=False, header=True, mode='x')
+
+
+# SCRAPE DATA USING THE BUSINESS PAGE LINKS IN 'data/links/{filename}.csv'
+# AND STORE IT IN 'data/{filename}.csv'
+def scrape_business_pages(urls_csv, keyword):
+    df = pd.read_csv(urls_csv)
+    links = df['google_link']
+
+    for page_link in links.tolist():
+        result_df:dict = scrape_google_page(page_link)
+        
+        if(result_df != None):
+            if(len(result_df) > 0):
+                df = pd.DataFrame(result_df, index=None)
+                file_name = f'data/{keyword}.csv'
+                if(os.path.isfile(file_name)):
+                    df.to_csv(file_name, index=False, header=False, mode='a')
+                else:
+                    df.to_csv(file_name, index=False, header=True, mode='x')
+
+def clean_data(filename:str):
+    df = pd.read_csv(filename)
+    df.drop_duplicates(subset=['company_name'], keep='first')
+    
+    df.to_csv('cleaned.csv')
+    
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--keyword', type=str, help='Give Keyword', required=True)
+    parser.add_argument('-l', action='store_true', help='Get links')
+    parser.add_argument('-r', action='store_true', help='Get records')
+    
+    args = parser.parse_args()
+    
+    keyword = args.keyword
+    
+    if(args.r):
+        scrape_business_pages(f"data/links/{keyword}.csv", keyword)
+    
+    if(args.l):
+        scrape_business_urls(keyword)
+    #     scrape_business_urls(keyword)
+    # keyword = 'Litigation'
+    # scrape_business_pages_test(f"data/links/{keyword}.csv", keyword)
+    # clean_data('data\Real Estate.csv')
+
+        
+            
+        
