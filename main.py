@@ -246,11 +246,3 @@ if __name__ == "__main__":
     
     if(args.l):
         scrape_business_urls(keyword)
-    #     scrape_business_urls(keyword)
-    # keyword = 'Litigation'
-    # scrape_business_pages_test(f"data/links/{keyword}.csv", keyword)
-    # clean_data('data\Real Estate.csv')
-
-        
-            
-        
