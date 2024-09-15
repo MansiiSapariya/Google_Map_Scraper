@@ -1,5 +1,8 @@
 Create a folder name *data* in your working directory first.
 
+This will search for all the locations specified in the maps.txt file sepearted by a newline.
+The basic serach it does is "{Keywword} near {map.txt[location]}"
+
 ## Command-Line Usage
 
 ### 1. Scraping Business Links
